@@ -33,6 +33,8 @@
     <h1>WebSocket Test Client</h1>
 
     <div class="controls">
+        <label for="userId">User ID:</label>
+        <input type="text" id="userId" placeholder="Enter User ID" required />
         <button onclick="connect()" id="connectBtn">Connect</button>
         <button onclick="disconnect()" id="disconnectBtn" disabled>Disconnect</button>
         <button onclick="sendSessionEvent()" id="sessionBtn" disabled>Send Session Event</button>
@@ -43,6 +45,7 @@
     <div class="status">
         <div>Status: <span id="status">Not Connected</span></div>
         <div>Session ID: <span id="sessionId">None</span></div>
+        <div>User ID: <span id="userIdDisplay">None</span></div>
     </div>
     
     <div class="log-container" id="eventLog"></div>
@@ -50,12 +53,14 @@
     <script>
         let stompClient = null;
         let sessionId = null;
+        let currentUserId = null;
 
         function updateButtons(isConnected) {
             document.getElementById('connectBtn').disabled = isConnected;
             document.getElementById('disconnectBtn').disabled = !isConnected;
             document.getElementById('sessionBtn').disabled = !isConnected;
             document.getElementById('broadcastBtn').disabled = !isConnected;
+            document.getElementById('userId').disabled = isConnected;
         }
 
         function addToEventLog(message, type = 'info') {
@@ -73,8 +78,17 @@
         }
 
         function connect() {
-            addToEventLog('Connecting to WebSocket server...', 'debug');
-            const socket = new SockJS('http://localhost:8080/ws');
+            const userIdInput = document.getElementById('userId').value.trim();
+            if (!userIdInput) {
+                alert('Please enter a User ID');
+                return;
+            }
+            
+            currentUserId = userIdInput;
+            addToEventLog(`Connecting to WebSocket with User ID: ${currentUserId}`, 'debug');
+            const wsUrl = `http://localhost:8080/ws?userId=${encodeURIComponent(currentUserId)}`;
+            addToEventLog(`WebSocket URL: ${wsUrl}`, 'debug');
+            const socket = new SockJS(wsUrl);
             stompClient = Stomp.over(socket);
             
             stompClient.debug = function(str) {
@@ -82,7 +96,16 @@
                 addToEventLog(str, 'debug');
             };
             
-            stompClient.connect({}, function(frame) {
+            const connectHeaders = {
+                'userId': currentUserId,
+                'login': currentUserId,
+                'passcode': 'none'
+            };
+            
+            console.log('Connecting with STOMP headers:', connectHeaders);
+            addToEventLog('Connecting with User ID: ' + currentUserId, 'debug');
+            
+            stompClient.connect(connectHeaders, function(frame) {
                 console.group('WebSocket Connection');
                 console.log('Connected with frame:', frame);
                 console.log('Headers:', frame.headers);
@@ -131,8 +154,9 @@
 
                 document.getElementById('status').textContent = 'Connected';
                 document.getElementById('sessionId').textContent = sessionId;
+                document.getElementById('userIdDisplay').textContent = currentUserId;
                 updateButtons(true);
-                addToEventLog('Connected with session ID: ' + sessionId);
+                addToEventLog('Connected with session ID: ' + sessionId + ' and User ID: ' + currentUserId);
                 console.groupEnd();
             }, function(error) {
                 console.error('STOMP error:', error);
@@ -153,8 +177,10 @@
                 stompClient.disconnect();
                 stompClient = null;
                 sessionId = null;
+                currentUserId = null;
                 document.getElementById('status').textContent = 'Disconnected';
                 document.getElementById('sessionId').textContent = 'None';
+                document.getElementById('userIdDisplay').textContent = 'None';
                 addToEventLog('Disconnected from server');
                 updateButtons(false);
             }

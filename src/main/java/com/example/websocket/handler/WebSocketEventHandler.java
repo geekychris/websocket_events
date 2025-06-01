@@ -14,9 +14,6 @@ import org.springframework.web.socket.messaging.SessionSubscribeEvent;
 import java.util.Collections;
 import java.util.Map;
 
-import java.util.Collections;
-import java.util.Map;
-
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -29,7 +26,33 @@ public class WebSocketEventHandler {
     public void handleWebSocketConnectListener(SessionConnectedEvent event) {
         StompHeaderAccessor headerAccessor = StompHeaderAccessor.wrap(event.getMessage());
         String sessionId = headerAccessor.getSessionId();
-        log.info("Received a new web socket connection, session ID: {}", sessionId);
+        
+        // Try to get userId from multiple sources
+        String userId = null;
+        Map<String, Object> attributes = headerAccessor.getSessionAttributes();
+        
+        if (attributes != null) {
+            userId = (String) attributes.get("userId");
+            log.debug("Found userId in session attributes: {}", userId);
+        }
+        
+        // If not in attributes or pending, try STOMP headers
+        if (userId == null || "pending".equals(userId)) {
+            userId = headerAccessor.getFirstNativeHeader("user-id");
+            if (userId == null) {
+                userId = headerAccessor.getFirstNativeHeader("client-id");
+            }
+            if (userId == null) {
+                userId = headerAccessor.getFirstNativeHeader("userId");
+            }
+            log.debug("Found userId in STOMP headers: {}", userId);
+        }
+        
+        // Use "unknown" as fallback
+        userId = (userId != null && !"pending".equals(userId)) ? userId : "unknown";
+        
+        // Log both session ID and user ID
+        log.info("Received a new web socket connection - Session ID: {}, User ID: {}", sessionId, userId);
     }
 
     @EventListener
@@ -68,8 +91,32 @@ public class WebSocketEventHandler {
         StompHeaderAccessor headerAccessor = StompHeaderAccessor.wrap(event.getMessage());
         String sessionId = headerAccessor.getSessionId();
         
+        // Get the user ID from session attributes before they're cleaned up
+        String userId = null;
+        Map<String, Object> attributes = headerAccessor.getSessionAttributes();
+        
+        if (attributes != null) {
+            userId = (String) attributes.get("userId");
+            log.debug("Found userId in session attributes during disconnect: {}", userId);
+        }
+        
+        // If not in attributes, try STOMP headers as fallback
+        if (userId == null || "pending".equals(userId)) {
+            userId = headerAccessor.getFirstNativeHeader("user-id");
+            if (userId == null) {
+                userId = headerAccessor.getFirstNativeHeader("client-id");
+            }
+            if (userId == null) {
+                userId = headerAccessor.getFirstNativeHeader("userId");
+            }
+            log.debug("Found userId in STOMP headers during disconnect: {}", userId);
+        }
+        
+        // Use "unknown" as fallback
+        userId = (userId != null && !"pending".equals(userId)) ? userId : "unknown";
+        
         if (sessionId != null) {
-            log.info("User disconnected: {}", sessionId);
+            log.info("User disconnected - Session ID: {}, User ID: {}", sessionId, userId);
             sessionManager.removeSession(sessionId);
             sessionManager.removeSession(sessionId + ".broadcast"); // Clean up broadcast subscription
         }
