@@ -5,7 +5,7 @@
 #  http://localhost:8080/api/events/send/YOUR_SESSION_ID
 #  -H "Content-Type: application/json"
 #  -d '{"eventType": "TEST_EVENT", "payload": {"message": "Hello!"}}'
-POST http://localhost:8080/api/events/send/nbpy1gnt
+POST http://localhost:8080/api/events/send/zdvwcm4q
 Content-Type: application/json
 
 {
