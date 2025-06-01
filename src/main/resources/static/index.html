@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Test Client</title>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <style>
+        .event-log {
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin: 10px 0;
+            height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+        }
+        .event { color: #007700; }
+        .error { color: #ff0000; }
+        .controls {
+            margin: 20px 0;
+            padding: 10px;
+            background: #f5f5f5;
+        }
+        .status-bar {
+            padding: 10px;
+            margin: 10px 0;
+            background: #e0e0e0;
+        }
+    </style>
+</head>
+<body>
+    <h1>WebSocket Test Client</h1>
+    
+    <div class="status-bar">
+        <span>Status: </span>
+        <span id="status">Disconnected</span>
+        <br>
+        <span id="sessionId"></span>
+    </div>
+
+    <div class="controls">
+        <button onclick="connect()" id="connectBtn">Connect</button>
+        <button onclick="disconnect()" id="disconnectBtn" disabled>Disconnect</button>
+        <button onclick="sendSessionEvent()" id="sessionBtn" disabled>Send Session Event</button>
+        <button onclick="sendBroadcastEvent()" id="broadcastBtn" disabled>Send Broadcast Event</button>
+        <button onclick="clearLog()" id="clearBtn">Clear Log</button>
+    </div>
+
+    <div id="eventLog" class="event-log"></div>
+
+    <script>
+        let stompClient = null;
+        let sessionId = null;
+
+        function updateButtons(connected) {
+            document.getElementById('connectBtn').disabled = connected;
+            document.getElementById('disconnectBtn').disabled = !connected;
+            document.getElementById('sessionBtn').disabled = !connected;
+            document.getElementById('broadcastBtn').disabled = !connected;
+        }
+
+        function addToEventLog(message, type = 'info') {
+            const eventLog = document.getElementById('eventLog');
+            const entry = document.createElement('div');
+            entry.className = type;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            eventLog.appendChild(entry);
+            eventLog.scrollTop = eventLog.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('eventLog').innerHTML = '';
+        }
+
+        function connect() {
+            const socket = new SockJS('/ws');  // Using relative path
+            stompClient = Stomp.over(socket);
+            
+            stompClient.debug = function(str) {
+                console.log('STOMP Debug:', str);
+                addToEventLog('STOMP: ' + str);
+            };
+            
+            stompClient.connect({}, function(frame) {
+                console.log('Connected with frame:', frame);
+                
+                // Extract session ID from socket URL
+                const socketUrl = socket._transport.url;
+                const match = socketUrl.match(/\/([^/]+)\/websocket/);
+                if (!match) {
+                    console.error('Could not extract session ID from URL:', socketUrl);
+                    addToEventLog('Error: Could not extract session ID', 'error');
+                    return;
+                }
+                
+                sessionId = match[1];
+                console.log('Using session ID:', sessionId);
+                
+                document.getElementById('status').textContent = 'Connected';
+                document.getElementById('sessionId').textContent = 'Session ID: ' + sessionId;
+                updateButtons(true);
+                
+                // Subscribe to session-specific events
+                const sessionTopic = '/topic/events.' + sessionId;
+                console.log('Subscribing to session topic:', sessionTopic);
+                addToEventLog('Subscribing to session topic: ' + sessionTopic);
+                
+                stompClient.subscribe(sessionTopic, function(message) {
+                    console.log('Received session message:', message);
+                    try {
+                        const event = JSON.parse(message.body);
+                        addToEventLog('Received session event: ' + JSON.stringify(event, null, 2), 'event');
+                    } catch (error) {
+                        console.error('Error parsing message:', error);
+                        addToEventLog('Error parsing message: ' + error.message, 'error');
+                    }
+                });
+
+                // Subscribe to broadcast events
+                const broadcastTopic = '/topic/events.broadcast';
+                console.log('Subscribing to broadcast topic:', broadcastTopic);
+                addToEventLog('Subscribing to broadcast topic: ' + broadcastTopic);
+                
+                stompClient.subscribe(broadcastTopic, function(message) {
+                    console.log('Received broadcast:', message);
+                    try {
+                        const event = JSON.parse(message.body);
+                        addToEventLog('Received broadcast event: ' + JSON.stringify(event, null, 2), 'event');
+                    } catch (error) {
+                        console.error('Error parsing broadcast:', error);
+                        addToEventLog('Error parsing broadcast: ' + error.message, 'error');
+                    }
+                });
+            }, function(error) {
+                console.error('STOMP error:', error);
+                document.getElementById('status').textContent = 'Error: ' + error;
+                addToEventLog('Connection error: ' + error, 'error');
+                updateButtons(false);
+            });
+
+            socket.onclose = function() {
+                console.log('Lost connection');
+                document.getElementById('status').textContent = 'Disconnected (connection lost)';
+                addToEventLog('WebSocket connection closed', 'error');
+                updateButtons(false);
+            };
+        }
+
+        function disconnect() {
+            if (stompClient !== null) {
+                stompClient.disconnect();
+                stompClient = null;
+                sessionId = null;
+                document.getElementById('status').textContent = 'Disconnected';
+                document.getElementById('sessionId').textContent = '';
+                addToEventLog('Disconnected from WebSocket');
+                updateButtons(false);
+            }
+        }
+
+        function sendSessionEvent() {
+            if (!sessionId) {
+                alert('Not connected!');
+                return;
+            }
+            
+            console.log('Sending event to session:', sessionId);
+            addToEventLog('Sending event to session: ' + sessionId);
+            
+            const eventData = {
+                eventType: 'TEST_EVENT',
+                payload: {
+                    message: 'Hello to specific session!'
+                }
+            };
+            
+            fetch(`/api/events/send/${sessionId}`, {  // Using relative path
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(eventData)
+            }).then(async response => {
+                if (!response.ok) {
+                    const text = await response.text();
+                    throw new Error(`Server error (${response.status}): ${text}`);
+                }
+                addToEventLog('Session event sent successfully', 'event');
+            }).catch(error => {
+                console.error('Error sending session event:', error);
+                addToEventLog('Failed to send session event: ' + error.message, 'error');
+            });
+        }
+
+        function sendBroadcastEvent() {
+            if (!sessionId) {
+                alert('Not connected!');
+                return;
+            }
+            
+            console.log('Sending broadcast event');
+            addToEventLog('Sending broadcast event');
+            
+            const eventData = {
+                eventType: 'TEST_EVENT',
+                payload: {
+                    message: 'Hello to all!'
+                }
+            };
+            
+            fetch('/api/events/broadcast', {  // Using relative path
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(eventData)
+            }).then(async response => {
+                if (!response.ok) {
+                    const text = await response.text();
+                    throw new Error(`Server error (${response.status}): ${text}`);
+                }
+                addToEventLog('Broadcast event sent successfully', 'event');
+            }).catch(error => {
+                console.error('Error sending broadcast event:', error);
+                addToEventLog('Failed to send broadcast event: ' + error.message, 'error');
+            });
+        }
+    </script>
+</body>
+</html>
+
