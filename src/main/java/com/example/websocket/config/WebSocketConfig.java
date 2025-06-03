@@ -22,6 +22,7 @@ import org.springframework.web.socket.server.support.DefaultHandshakeHandler;
 import java.security.Principal;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -85,33 +86,83 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                 StompHeaderAccessor accessor = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
                 
                 if (accessor != null && StompCommand.CONNECT.equals(accessor.getCommand())) {
-                    // Debug log all headers
-                    log.debug("STOMP CONNECT headers: {}", accessor.getMessageHeaders());
-                    log.debug("STOMP CONNECT native headers: {}", accessor.getNativeHeader("userId"));
+                    log.debug("=== STOMP CONNECT START ===");
                     
-                    // Try different ways to get userId
-                    String userId = accessor.getFirstNativeHeader("user-id");
-                    if (userId == null) {
-                        userId = accessor.getFirstNativeHeader("client-id");
-                        log.debug("Trying client-id header for userId: {}", userId);
-                    }
-                    if (userId == null) {
-                        userId = accessor.getFirstNativeHeader("userId"); // fallback to old format
-                        log.debug("Trying legacy userId header: {}", userId);
-                    }
+                    // Log all headers for debugging
+                    Map<String, Object> messageHeaders = accessor.getMessageHeaders();
+                    log.debug("Message headers: {}", messageHeaders);
                     
-                    if (userId != null) {
-                        log.info("Found userId in STOMP headers: {}", userId);
-                        Map<String, Object> attributes = accessor.getSessionAttributes();
-                        if (attributes == null) {
-                            attributes = new HashMap<>();
-                        }
-                        attributes.put("userId", userId);
-                        accessor.setSessionAttributes(attributes);
+                    // Get and log native headers
+                    Map<String, List<String>> nativeHeaders = accessor.getNativeHeaders();
+                    if (nativeHeaders != null) {
+                        nativeHeaders.forEach((key, value) -> {
+                            log.debug("Native header - {}: {}", key, value);
+                        });
                     } else {
-                        log.warn("No userId found in STOMP headers");
+                        log.warn("No native headers found in STOMP message");
                     }
+                    
+                    // Get session attributes
+                    Map<String, Object> sessionAttrs = accessor.getSessionAttributes();
+                    log.debug("Initial session attributes: {}", sessionAttrs);
+                    
+                    // Try to get userId from STOMP headers with detailed logging
+                    String userId = null;
+                    if (nativeHeaders != null) {
+                        // Try user-id first
+                        List<String> userIdHeaders = nativeHeaders.get("user-id");
+                        if (userIdHeaders != null && !userIdHeaders.isEmpty()) {
+                            userId = userIdHeaders.get(0);
+                            log.debug("Found userId in user-id header: {}", userId);
+                        }
+                        
+                        // Try client-id if user-id not found
+                        if (userId == null) {
+                            userIdHeaders = nativeHeaders.get("client-id");
+                            if (userIdHeaders != null && !userIdHeaders.isEmpty()) {
+                                userId = userIdHeaders.get(0);
+                                log.debug("Found userId in client-id header: {}", userId);
+                            }
+                        }
+                        
+                        // Try legacy userId if still not found
+                        if (userId == null) {
+                            userIdHeaders = nativeHeaders.get("userId");
+                            if (userIdHeaders != null && !userIdHeaders.isEmpty()) {
+                                userId = userIdHeaders.get(0);
+                                log.debug("Found userId in legacy userId header: {}", userId);
+                            }
+                        }
+                    }
+                    
+                    // Ensure session attributes exist
+                    if (sessionAttrs == null) {
+                        sessionAttrs = new HashMap<>();
+                        accessor.setSessionAttributes(sessionAttrs);
+                    }
+                    
+                    // Handle userId from headers or session
+                    if (userId != null && !userId.trim().isEmpty()) {
+                        log.info("Setting userId from STOMP headers: {}", userId);
+                        sessionAttrs.put("userId", userId);
+                        accessor.setSessionAttributes(sessionAttrs);
+                    } else {
+                        // Check if we already have a userId from handshake
+                        userId = (String) sessionAttrs.get("userId");
+                        if (userId != null) {
+                            log.debug("Using existing userId from session: {}", userId);
+                        } else {
+                            log.warn("No userId found in STOMP headers or session attributes");
+                        }
+                    }
+                    
+                    // Log final state
+                    log.debug("Final session attributes: {}", accessor.getSessionAttributes());
+                    log.debug("=== STOMP CONNECT END ===");
+                } else if (accessor != null) {
+                    log.debug("Non-CONNECT STOMP command: {}", accessor.getCommand());
                 }
+                
                 return message;
             }
         });
@@ -126,22 +177,35 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                     org.springframework.http.server.ServerHttpResponse response,
                     WebSocketHandler wsHandler,
                     Map<String, Object> attributes) {
-                // Store session creation time and initialize attributes
+                
+                log.debug("=== WebSocket Handshake START ===");
+                
+                // Initialize attributes
                 attributes.put("connectionTime", System.currentTimeMillis());
                 
-                // Check for userId in request parameters
+                // Extract userId from URL parameters
                 if (request instanceof org.springframework.http.server.ServletServerHttpRequest) {
                     org.springframework.http.server.ServletServerHttpRequest servletRequest = 
                         (org.springframework.http.server.ServletServerHttpRequest) request;
+                    
+                    // Log all request parameters
+                    Map<String, String[]> params = servletRequest.getServletRequest().getParameterMap();
+                    log.debug("All request parameters: {}", params);
+                    
                     String userId = servletRequest.getServletRequest().getParameter("userId");
-                    if (userId != null) {
-                        log.debug("Found userId in handshake request: {}", userId);
+                    log.debug("Handshake URL userId parameter: {}", userId);
+                    
+                    if (userId != null && !userId.trim().isEmpty()) {
+                        log.info("Setting userId from URL parameter: {}", userId);
                         attributes.put("userId", userId);
+                        attributes.put("original_userId", userId);
                     } else {
-                        log.debug("No userId in handshake request, setting pending");
-                        attributes.put("userId", "pending");
+                        log.debug("No userId in URL parameters, will check STOMP headers");
                     }
                 }
+                
+                log.debug("Handshake attributes: {}", attributes);
+                log.debug("=== WebSocket Handshake END ===");
                 return true;
             }
 

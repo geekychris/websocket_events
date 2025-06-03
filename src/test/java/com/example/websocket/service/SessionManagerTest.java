@@ -8,7 +8,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 
-import java.time.Instant;
 import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -20,12 +19,15 @@ class SessionManagerTest {
 
     @Mock
     private SimpMessagingTemplate messagingTemplate;
+    
+    @Mock
+    private RedisConnectionManager redisConnectionManager;
 
     private SessionManager sessionManager;
 
     @BeforeEach
     void setUp() {
-        sessionManager = new SessionManager(messagingTemplate);
+        sessionManager = new SessionManager(messagingTemplate, redisConnectionManager);
     }
 
     @Test
@@ -33,18 +35,21 @@ class SessionManagerTest {
         // Given
         String sessionId = "test-session";
         String subscriptionId = "/topic/events.test-session";
+        String userId = "test-user";
 
         // When
-        sessionManager.registerSession(sessionId, subscriptionId);
+        sessionManager.registerSession(sessionId, subscriptionId, userId);
 
         // Then
         assert sessionManager.hasSession(sessionId);
+        verify(redisConnectionManager).registerConnection(eq(userId), eq(sessionId));
 
         // When
         sessionManager.removeSession(sessionId);
 
         // Then
         assert !sessionManager.hasSession(sessionId);
+        verify(redisConnectionManager).deregisterConnection(eq(userId), eq(sessionId));
     }
 
     @Test
@@ -52,7 +57,8 @@ class SessionManagerTest {
         // Given
         String sessionId = "test-session";
         String subscriptionId = "/topic/events.test-session";
-        sessionManager.registerSession(sessionId, subscriptionId);
+        String userId = "test-user";
+        sessionManager.registerSession(sessionId, subscriptionId, userId);
 
         Event event = Event.of("TEST_EVENT", sessionId, Map.of("test", "data"));
 
@@ -83,21 +89,28 @@ class SessionManagerTest {
     }
 
     @Test
-    void shouldBroadcastEventToAllSessions() {
+    void shouldSkipRedisRegistrationForUnknownUser() {
         // Given
-        String session1 = "session-1";
-        String session2 = "session-2";
-        sessionManager.registerSession(session1, "/topic/events.session-1");
-        sessionManager.registerSession(session2, "/topic/events.session-2");
+        String sessionId = "test-session";
+        String subscriptionId = "/topic/events.test-session";
 
+        // When
+        sessionManager.registerSession(sessionId, subscriptionId);
+
+        // Then
+        verify(redisConnectionManager, never()).registerConnection(any(), any());
+    }
+
+    @Test
+    void shouldBroadcastEvent() {
+        // Given
         Event event = Event.of("BROADCAST_EVENT", null, Map.of("broadcast", "message"));
 
         // When
         sessionManager.broadcastEvent(event);
 
         // Then
-        verify(messagingTemplate).convertAndSend("/topic/events.session-1", event);
-        verify(messagingTemplate).convertAndSend("/topic/events.session-2", event);
+        verify(messagingTemplate).convertAndSend("/topic/events.broadcast", event);
     }
 
     @Test
@@ -105,7 +118,8 @@ class SessionManagerTest {
         // Given
         String sessionId = "test-session";
         String subscriptionId = "/topic/events.test-session";
-        sessionManager.registerSession(sessionId, subscriptionId);
+        String userId = "test-user";
+        sessionManager.registerSession(sessionId, subscriptionId, userId);
 
         Event event = Event.of("TEST_EVENT", sessionId, Map.of("test", "data"));
 

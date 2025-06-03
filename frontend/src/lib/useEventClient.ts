@@ -2,6 +2,16 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import EventClient from './EventClient';
 import type { Event, EventHandler, ConnectionStatus, EventClientConfig } from './types';
 
+// Helper to check if config values that require reconnection have changed
+const hasReconnectConfigChanged = (
+    prevConfig: EventClientConfig | undefined, 
+    newConfig: EventClientConfig | undefined
+): boolean => {
+    if (!prevConfig && !newConfig) return false;
+    if (!prevConfig || !newConfig) return true;
+    return prevConfig.url !== newConfig.url || prevConfig.userId !== newConfig.userId;
+};
+
 export function useEventClient(config?: EventClientConfig) {
     const clientRef = useRef<EventClient | null>(null);
     const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>({
@@ -9,20 +19,43 @@ export function useEventClient(config?: EventClientConfig) {
         connecting: false
     });
 
-    // Initialize the client
+    // Store the previous config for comparison
+    const prevConfigRef = useRef<EventClientConfig | undefined>();
+
+    // Initialize and manage the client
     useEffect(() => {
+        // Check if we need to reconnect
+        if (clientRef.current && !hasReconnectConfigChanged(prevConfigRef.current, config)) {
+            return;
+        }
+
+        // Cleanup existing client if it exists
+        if (clientRef.current) {
+            clientRef.current.disconnect();
+            clientRef.current = null;
+        }
+
+        // Create and initialize new client
         clientRef.current = new EventClient(config);
         
         // Connect and setup status listener
-        clientRef.current.connect();
+        clientRef.current.connect().catch(error => {
+            console.error('Failed to connect:', error);
+        });
+        
         const unsubscribe = clientRef.current.onConnectionStatusChange(setConnectionStatus);
         
+        // Update the previous config reference
+        prevConfigRef.current = config;
+
         return () => {
             unsubscribe();
-            clientRef.current?.disconnect();
-            clientRef.current = null;
+            if (clientRef.current) {
+                clientRef.current.disconnect();
+                clientRef.current = null;
+            }
         };
-    }, []);
+    }, [config]); // Track the entire config object
 
     // Subscribe to events
     const subscribe = useCallback((eventType: string, handler: EventHandler) => {

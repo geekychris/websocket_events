@@ -15,18 +15,39 @@ import java.util.concurrent.ConcurrentHashMap;
 public class SessionManager {
     private static final String BROADCAST_TOPIC = "/topic/events.broadcast";
     private final Map<String, String> sessionRegistry = new ConcurrentHashMap<>();
+    private final Map<String, String> userSessionMap = new ConcurrentHashMap<>();
     private final SimpMessagingTemplate messagingTemplate;
+    private final RedisConnectionManager redisConnectionManager;
 
     public void registerSession(String sessionId, String subscriptionId) {
         sessionRegistry.put(sessionId, subscriptionId);
         log.info("Registered session: {} with subscription: {}", sessionId, subscriptionId);
     }
 
+    public void registerSession(String sessionId, String subscriptionId, String userId) {
+        sessionRegistry.put(sessionId, subscriptionId);
+        if (userId != null && !userId.equals("unknown")) {
+            userSessionMap.put(sessionId, userId);
+            redisConnectionManager.registerConnection(userId, sessionId);
+        }
+        log.info("Registered session: {} with subscription: {} for user: {}", sessionId, subscriptionId, userId);
+    }
+
     public void removeSession(String sessionId) {
         String subscription = sessionRegistry.remove(sessionId);
-        if (subscription != null) {
-            log.info("Removed session: {} with subscription: {}", sessionId, subscription);
+        String userId = userSessionMap.remove(sessionId);
+        
+        if (userId != null) {
+            redisConnectionManager.deregisterConnection(userId, sessionId);
         }
+        
+        if (subscription != null) {
+            log.info("Removed session: {} with subscription: {} for user: {}", sessionId, subscription, userId);
+        }
+    }
+
+    public String getUserIdForSession(String sessionId) {
+        return userSessionMap.get(sessionId);
     }
 
     public boolean hasSession(String sessionId) {

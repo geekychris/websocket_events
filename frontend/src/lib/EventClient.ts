@@ -30,9 +30,16 @@ class EventClient {
         this.client = new Client({
             webSocketFactory: () => new SockJS(this.config.url!),
             reconnectDelay: this.config.reconnectDelay,
+            connectHeaders: this.config.userId ? {
+                'user-id': this.config.userId,
+                'userId': this.config.userId  // for backward compatibility
+            } : {},
             debug: (str) => {
                 if (this.config.debug) {
                     console.log('STOMP:', str);
+                    if (this.config.userId) {
+                        console.log('Using userId:', this.config.userId);
+                    }
                 }
             },
             onConnect: this.handleConnect.bind(this),
@@ -44,6 +51,10 @@ class EventClient {
     public connect(): Promise<void> {
         if (this.connectionStatus.connected) {
             return Promise.resolve();
+        }
+
+        if (this.config.debug && !this.config.userId) {
+            console.warn('No userId provided in EventClient configuration');
         }
 
         return new Promise((resolve, reject) => {
@@ -117,6 +128,11 @@ class EventClient {
 
     private handleConnect(frame: Frame): void {
         this.sessionId = frame.headers['session-id'];
+        
+        if (this.config.debug) {
+            console.log('Connected with session ID:', this.sessionId);
+            console.log('Using userId:', this.config.userId || 'not set');
+        }
         
         // Subscribe to session-specific topic
         this.client.subscribe(`/topic/events.${this.sessionId}`, (message) => {
