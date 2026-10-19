@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="Websocket Events logo" width="180">
+</p>
+
 # WebSocket Event Service
 
 A Spring Boot application demonstrating real-time event broadcasting using WebSocket/STOMP protocol with support for both targeted and broadcast events.
